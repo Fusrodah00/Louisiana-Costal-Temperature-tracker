@@ -1,0 +1,98 @@
+\
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Coastal Louisiana — NOAA Temperature & Heat Index</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#fff;color:#172033;font-family:Arial,Helvetica,sans-serif}
+.page{max-width:1700px;margin:auto;padding:14px 20px 10px}
+h1{margin:0;text-align:center;font-size:clamp(25px,2.2vw,39px);line-height:1.15;font-weight:800}
+.subtitle{text-align:center;margin-top:7px;color:#626c7c;font-size:clamp(16px,1.4vw,26px)}
+.controls{display:flex;justify-content:center;align-items:center;gap:12px;margin:14px auto 5px;flex-wrap:wrap}
+.controls label{font-weight:700;font-size:17px}select{font-size:17px;padding:8px 38px 8px 12px;border:1px solid #aeb5c0;border-radius:8px;background:#fff;color:#172033}
+.station,.status{text-align:center;color:#5f6877;font-size:14px;margin:5px 0}.legend{margin:17px auto 8px;display:flex;justify-content:center;gap:28px;flex-wrap:wrap;font-size:16px}
+.li{display:flex;align-items:center;gap:9px}.line{width:42px;height:0;border-top:3px solid;position:relative}.line:after{content:"";position:absolute;width:10px;height:10px;border:2px solid currentColor;background:#fff;border-radius:50%;left:50%;top:50%;transform:translate(-50%,-50%)}.blue{color:#1645c5}.red{color:#ef2b21}.dash{border-top-style:dashed}
+.info{text-align:center;margin:0 0 8px;font-size:14px;color:#596171}.chart-wrap{height:min(59vw,620px);min-height:430px;position:relative}
+.summary{display:grid;grid-template-columns:repeat(6,1fr);border:1px solid #cfd4dc;border-radius:12px;overflow:hidden;margin:6px 0 12px}
+.stat{text-align:center;padding:12px 6px 9px;min-height:91px;border-right:1px solid #d2d6dd;font-size:13px}.stat:last-child{border:0}.st{font-size:14px;font-weight:800;margin-bottom:6px}.sv{font-size:23px;font-weight:800}.bs{color:#123db8}.rs{color:#e82920}
+.error{display:none;margin:12px auto;padding:12px;border:1px solid #efb4b0;border-radius:8px;background:#fff6f5;color:#9b1c15;max-width:1100px;white-space:pre-wrap}
+.footer{display:flex;justify-content:space-between;color:#596171;font-size:12px;gap:20px}
+@media(max-width:900px){.page{padding:10px}.summary{grid-template-columns:repeat(2,1fr)}.stat{border-bottom:1px solid #d2d6dd}.stat:nth-child(2n){border-right:0}.stat:nth-last-child(-n+2){border-bottom:0}.footer{flex-direction:column}}
+</style>
+</head>
+<body>
+<div class="page">
+<h1>Coastal Louisiana — 5-Year Average Weekly Temperature &amp; Heat Index</h1>
+<div class="subtitle">NOAA CO-OPS data: 2020–2025 baseline + 2026 actual through the latest completed week + 2026 projection</div>
+<div class="controls"><label for="region">Coastal region:</label>
+<select id="region"><option value="east">East Coast Louisiana</option><option value="central">Central Coast Louisiana</option><option value="west">West Coast Louisiana</option></select></div>
+<div class="station" id="station"></div><div class="status" id="status">Loading saved NOAA data…</div>
+<div class="legend">
+<div class="li"><span class="line blue"></span>Historical weekly average (2020–2025)</div>
+<div class="li"><span class="line red"></span>Historical average heat index</div>
+<div class="li"><span class="line blue dash"></span>2026 actual / projected temperature</div>
+<div class="li"><span class="line red dash"></span>2026 actual / projected heat index</div>
+</div>
+<div class="info">2026 actuals are NOAA observations; remaining weeks are projected from the observed 2026 anomaly relative to the 2020–2025 weekly baseline.</div>
+<div class="chart-wrap"><canvas id="chart"></canvas></div>
+<div class="summary" id="summary"></div><div class="error" id="error"></div>
+<div class="footer"><span>Source: NOAA CO-OPS. Heat index uses station air temperature + relative humidity.</span><span id="source"></span></div>
+</div>
+<script>
+const REGIONS={east:"East Coast Louisiana",central:"Central Coast Louisiana",west:"West Coast Louisiana"};
+let chart=null,data=null;
+const $=id=>document.getElementById(id);
+function mean(a){const v=a.filter(Number.isFinite);return v.length?v.reduce((s,x)=>s+x,0)/v.length:null}
+function render(key){
+ const s=data.stations[key], labels=data.weeks;
+ $("station").textContent=`${s.station} — NOAA CO-OPS station ${s.id} • ${s.lat.toFixed(3)}°N, ${Math.abs(s.lon).toFixed(3)}°W`;
+ const ds=[
+  {label:"Historical Avg Temp",data:s.baseline_temp,borderColor:"#1645c5",pointBorderColor:"#1645c5",pointBackgroundColor:"#fff",pointRadius:3,borderWidth:2.5,tension:.25,yAxisID:"temp"},
+  {label:"Historical Avg Heat Index",data:s.baseline_heat_index,borderColor:"#ef2b21",pointBorderColor:"#ef2b21",pointBackgroundColor:"#fff",pointRadius:3,borderWidth:2.5,tension:.25,yAxisID:"heat"},
+  {label:"2026 Actual Temp",data:s.actual_2026_temp,borderColor:"#1645c5",pointBorderColor:"#1645c5",pointBackgroundColor:"#fff",pointRadius:3,borderWidth:2.5,tension:.25,yAxisID:"temp"},
+  {label:"2026 Projected Temp",data:s.projected_2026_temp,borderColor:"#1645c5",borderDash:[8,6],pointRadius:3,borderWidth:2.5,tension:.25,yAxisID:"temp"},
+  {label:"2026 Actual Heat Index",data:s.actual_2026_heat_index,borderColor:"#ef2b21",pointBorderColor:"#ef2b21",pointBackgroundColor:"#fff",pointRadius:3,borderWidth:2.5,tension:.25,yAxisID:"heat"},
+  {label:"2026 Projected Heat Index",data:s.projected_2026_heat_index,borderColor:"#ef2b21",borderDash:[8,6],pointRadius:3,borderWidth:2.5,tension:.25,yAxisID:"heat"}
+ ];
+ if(chart)chart.destroy();
+ chart=new Chart($("chart"),{type:"line",data:{labels,datasets:ds},options:{
+  responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},
+  plugins:{legend:{display:false},tooltip:{callbacks:{title:i=>`Week ${i[0].label}`,label:i=>`${i.dataset.label}: ${Number(i.raw).toFixed(1)}°F`}}},
+  scales:{
+   x:{title:{display:true,text:"Week of Year",font:{size:18,weight:"bold"}},ticks:{maxRotation:0}},
+   temp:{position:"left",min:10,max:115,title:{display:true,text:"Temperature (°F)",font:{size:18,weight:"bold"}},ticks:{stepSize:10},grid:{color:"#dfe2e6"}},
+   heat:{position:"right",min:10,max:115,title:{display:true,text:"Heat Index (°F)",font:{size:18,weight:"bold"}},ticks:{stepSize:10},grid:{drawOnChartArea:false}}
+  }
+ }});
+ const at=s.actual_2026_temp.filter(Number.isFinite), ah=s.actual_2026_heat_index.filter(Number.isFinite);
+ const pt=s.projected_2026_temp.filter(Number.isFinite), ph=s.projected_2026_heat_index.filter(Number.isFinite);
+ $("summary").innerHTML=`
+ <div class="stat bs"><div class="st">REGION / STATION</div><div>${REGIONS[key]}</div><div class="sv">${s.station}</div></div>
+ <div class="stat bs"><div class="st">2020–2025 AVG TEMP</div><div class="sv">${mean(s.baseline_temp)?.toFixed(1)??"—"}°F</div></div>
+ <div class="stat bs"><div class="st">2026 ACTUAL AVG TEMP</div><div class="sv">${mean(at)?.toFixed(1)??"—"}°F</div></div>
+ <div class="stat rs"><div class="st">2020–2025 AVG HEAT INDEX</div><div class="sv">${mean(s.baseline_heat_index)?.toFixed(1)??"—"}°F</div></div>
+ <div class="stat rs"><div class="st">2026 ACTUAL AVG HEAT INDEX</div><div class="sv">${mean(ah)?.toFixed(1)??"—"}°F</div></div>
+ <div class="stat rs"><div class="st">2026 PROJECTED PEAK</div><div class="sv">${pt.length?Math.max(...pt).toFixed(1):"—"}° / ${ph.length?Math.max(...ph).toFixed(1):"—"}°F</div></div>`;
+ $("status").textContent=`NOAA data generated ${new Date(data.generated_utc).toLocaleString()} • 2026 observations through the latest completed week`;
+ $("source").textContent=`Station ${s.id} • hourly air temperature + relative humidity`;
+}
+async function init(){
+ try{
+  const r=await fetch("data/coastal.json?"+Date.now(),{cache:"no-store"});
+  if(!r.ok)throw new Error(`data/coastal.json returned HTTP ${r.status}`);
+  data=await r.json();
+  render($("region").value);
+ }catch(e){
+  $("status").textContent="NOAA data file is not available yet.";
+  $("error").style.display="block";
+  $("error").textContent=`${e.message}\n\nThe GitHub Action must run once to create data/coastal.json. Open the repository's Actions tab and run “Update NOAA Coastal Data” manually.`;
+ }
+}
+$("region").addEventListener("change",()=>data&&render($("region").value));
+init();
+</script>
+</body>
+</html>
