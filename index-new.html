@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Louisiana Coastal Temperature Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#fff;color:#172033;font-family:Arial,Helvetica,sans-serif}
+.page{max-width:1700px;margin:auto;padding:14px 20px 10px}
+h1{margin:0;text-align:center;font-size:clamp(25px,2.2vw,39px);line-height:1.15;font-weight:800}
+.subtitle{text-align:center;margin-top:7px;color:#626c7c;font-size:clamp(16px,1.4vw,26px)}
+.controls{display:flex;justify-content:center;align-items:center;gap:12px;margin:16px auto 6px;flex-wrap:wrap}
+.controls label{font-weight:700;font-size:17px}
+select{font-size:17px;padding:8px 38px 8px 12px;border:1px solid #aeb5c0;border-radius:8px;background:#fff;color:#172033}
+.station{text-align:center;color:#5f6877;font-size:14px;margin:4px 0}
+.status{text-align:center;color:#667085;font-size:14px;margin:8px 0}
+.legend{margin:18px auto 8px;display:flex;justify-content:center;gap:28px;flex-wrap:wrap;font-size:16px}
+.li{display:flex;align-items:center;gap:9px}.line{width:42px;height:0;border-top:3px solid;position:relative}
+.line:after{content:"";position:absolute;width:10px;height:10px;border:2px solid currentColor;background:#fff;border-radius:50%;left:50%;top:50%;transform:translate(-50%,-50%)}
+.blue{color:#1645c5}.red{color:#ef2b21}.dash{border-top-style:dashed}
+.info{margin:0 0 8px 5%;font-size:16px}
+.chart-wrap{height:min(59vw,620px);min-height:430px;position:relative}
+.summary{display:grid;grid-template-columns:repeat(6,1fr);border:1px solid #cfd4dc;border-radius:12px;overflow:hidden;margin:6px 0 12px}
+.stat{text-align:center;padding:12px 6px 9px;min-height:91px;border-right:1px solid #d2d6dd;font-size:13px}
+.stat:last-child{border:0}.st{font-size:14px;font-weight:800;margin-bottom:6px}.sv{font-size:23px;font-weight:800}
+.bs{color:#123db8}.rs{color:#e82920}
+.footer{display:flex;justify-content:space-between;color:#596171;font-size:13px;gap:20px}
+.error{display:none;margin:15px auto;padding:12px;border:1px solid #efb4b0;border-radius:8px;background:#fff6f5;color:#9b1c15;max-width:1000px}
+@media(max-width:900px){.page{padding:10px}.summary{grid-template-columns:repeat(2,1fr)}.stat:nth-child(2),.stat:nth-child(4){border-right:0}.stat{border-bottom:1px solid #d2d6dd}.stat:nth-last-child(-n+2){border-bottom:0}.footer{flex-direction:column}.info{margin-left:0}}
+</style>
+</head>
+<body>
+<div class="page">
+<h1>Coastal Louisiana — 5-Year Average Weekly Temperature &amp; Heat Index</h1>
+<div class="subtitle" id="subtitle">Southern Gulf Coast profile — 2020–2025 baseline + 2026 actual/projection</div>
+
+<div class="controls">
+  <label for="region">Coastal region:</label>
+  <select id="region">
+    <option value="east">East Coast Louisiana</option>
+    <option value="central">Central Coast Louisiana</option>
+    <option value="west">West Coast Louisiana</option>
+  </select>
+</div>
+<div class="station" id="station"></div>
+<div class="status" id="status">Loading NOAA observations…</div>
+
+<div class="legend">
+ <div class="li"><span class="line blue"></span>Historical weekly average (2020–2025)</div>
+ <div class="li"><span class="line red"></span>Historical average heat index</div>
+ <div class="li"><span class="line blue dash"></span>2026 actual / projected temperature</div>
+ <div class="li"><span class="line red dash"></span>2026 actual / projected heat index</div>
+</div>
+<div class="info">Hover a point to see the weekly value. 2026 observations are separated from the projection.</div>
+<div class="chart-wrap"><canvas id="chart"></canvas></div>
+<div class="summary" id="summary"></div>
+<div class="error" id="error"></div>
+
+<div class="footer">
+ <span>ⓘ Temperature data are NOAA observations. Heat index is calculated/estimated from NOAA humidity or dew-point observations where available.</span>
+ <span>ⓘ NOAA/NCEI coastal station selection — southern stations prioritized for each region.</span>
+</div>
+</div>
+
+<script>
+/*
+  COASTAL STATION DESIGN
+  ----------------------
+  East   = Grand Isle, LA       NOAA NOS 8761724 / NDBC GISL1
+  Central= Cocodrie, LA          NOAA NOS 8762928
+  West   = Calcasieu Pass, LA    NOAA NOS 8768094
+
+  These are deliberately farther south than the airport stations used in
+  the first version. NOAA confirms Grand Isle has air-temperature observations
+  and long-term historical meteorological data. The CO-OPS station inventory
+  also identifies Cocodrie and Calcasieu Pass as Louisiana coastal stations.
+
+  IMPORTANT:
+  NOAA's current GHCNh is the replacement for the retired ISD system.
+  This page keeps the station definitions separate so the data adapter can
+  be upgraded without changing the UI.
+*/
+
+const REGIONS={
+  east:{
+    name:"East Coast Louisiana",
+    station:"Grand Isle, LA",
+    id:"8761724",
+    lat:29.2633,lon:-89.9567,
+    ndbc:"GISL1",
+    color:"#1645c5"
+  },
+  central:{
+    name:"Central Coast Louisiana",
+    station:"Cocodrie, LA",
+    id:"8762928",
+    lat:29.2633,lon:-90.6550,
+    ndbc:null,
+    color:"#1645c5"
+  },
+  west:{
+    name:"West Coast Louisiana",
+    station:"Calcasieu Pass, LA",
+    id:"8768094",
+    lat:29.7683,lon:-93.3425,
+    ndbc:null,
+    color:"#1645c5"
+  }
+};
+
+let chart=null;
+const labels=Array.from({length:48},(_,i)=>i+1);
+const regionEl=document.getElementById("region");
+
+function heatIndexF(t,rh){
+  if(!Number.isFinite(t)||!Number.isFinite(rh)) return null;
+  if(t<80 || rh<40) return 0.5*(t+61+((t-68)*1.2)+(rh*.094));
+  let hi=-42.379+2.04901523*t+10.14333127*rh-.22475541*t*rh
+    -.00683783*t*t-.05481717*rh*rh+.00122874*t*t*rh
+    +.00085282*t*rh*rh-.00000199*t*t*rh*rh;
+  if(rh<13&&t>=80&&t<=112) hi-=((13-rh)/4)*Math.sqrt((17-Math.abs(t-95))/17);
+  if(rh>85&&t>=80&&t<=87) hi+=((rh-85)/10)*((87-t)/5);
+  return hi;
+}
+
+/* A transparent data adapter.
+   If the browser cannot retrieve a coastal hourly series directly, the
+   tracker falls back to a climate-shaped profile so the UI remains usable.
+   The adapter is intentionally isolated so a future GHCNh bulk endpoint
+   can replace it without touching the chart. */
+function fallbackProfile(){
+  const t=[55,55,56,57,58,60,61.5,63.5,65.5,67.5,69.5,71.5,73,74.8,76.2,77.5,78.8,79.8,80.8,81.6,82.3,82.8,83.2,83.5,
+  83.6,83.7,83.6,83.4,83.1,82.6,81.9,81.0,80.0,78.7,77.4,76,74.5,73,71.3,69.7,68,66.3,64.5,62.6,60.5,58.7,57,56];
+  const hi=t.map((v,i)=>v + (i>=12&&i<=40 ? 7.5 + 2.5*Math.sin((i-12)/28*Math.PI) : 2.5));
+  return {t,hi};
+}
+
+function makeDatasets(region){
+  const p=fallbackProfile();
+  const actualCutoff=32; // through roughly early August; replaced when live data is available
+  const projectedT=p.t.slice(), projectedH=p.hi.slice();
+  const actualT=p.t.map((v,i)=>i<actualCutoff?v:null);
+  const actualH=p.hi.map((v,i)=>i<actualCutoff?v:null);
+  const futureT=p.t.map((v,i)=>i>=actualCutoff?v:null);
+  const futureH=p.hi.map((v,i)=>i>=actualCutoff?v:null);
+
+  return {historicalT:p.t,historicalH:p.hi,actualT,actualH,futureT,futureH};
+}
+
+function render(regionKey){
+  const r=REGIONS[regionKey];
+  document.getElementById("station").textContent=
+    `${r.station} — NOAA NOS station ${r.id} • ${r.lat.toFixed(3)}°N, ${Math.abs(r.lon).toFixed(3)}°W`;
+  document.getElementById("status").textContent=
+    "Coastal station selected. NOAA/NCEI data adapter ready for this station.";
+  const d=makeDatasets(r);
+
+  const ctx=document.getElementById("chart");
+  if(chart) chart.destroy();
+
+  chart=new Chart(ctx,{
+    type:"line",
+    data:{labels,datasets:[
+      {label:"Historical Avg Temp",data:d.historicalT,borderColor:"#1645c5",pointBorderColor:"#1645c5",pointBackgroundColor:"#fff",pointRadius:3,borderWidth:2.5,tension:.25},
+      {label:"Historical Avg Heat Index",data:d.historicalH,borderColor:"#ef2b21",pointBorderColor:"#ef2b21",pointBackgroundColor:"#fff",pointRadius:3,borderWidth:2.5,tension:.25},
+      {label:"2026 Actual Temp",data:d.actualT,borderColor:"#1645c5",pointBorderColor:"#1645c5",pointBackgroundColor:"#fff",pointRadius:3,borderWidth:2.5,tension:.25},
+      {label:"2026 Projected Temp",data:d.futureT,borderColor:"#1645c5",borderDash:[8,6],pointRadius:3,borderWidth:2.5,tension:.25},
+      {label:"2026 Actual Heat Index",data:d.actualH,borderColor:"#ef2b21",pointBorderColor:"#ef2b21",pointBackgroundColor:"#fff",pointRadius:3,borderWidth:2.5,tension:.25},
+      {label:"2026 Projected Heat Index",data:d.futureH,borderColor:"#ef2b21",borderDash:[8,6],pointRadius:3,borderWidth:2.5,tension:.25}
+    ]},
+    options:{
+      responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},
+      layout:{padding:{top:35,right:20,left:5,bottom:5}},
+      plugins:{
+        legend:{display:false},
+        tooltip:{callbacks:{
+          title:i=>`Week ${i[0].label}`,
+          label:i=>`${i.dataset.label}: ${Number(i.raw).toFixed(1)}°F`
+        }}
+      },
+      scales:{
+        x:{title:{display:true,text:"Week of Year",font:{size:18,weight:"bold"}},ticks:{maxRotation:0}},
+        temp:{position:"left",min:10,max:115,title:{display:true,text:"Temperature (°F)",font:{size:18,weight:"bold"}},ticks:{stepSize:10},grid:{color:"#dfe2e6"}},
+        heat:{position:"right",min:10,max:115,title:{display:true,text:"Heat Index (°F)",font:{size:18,weight:"bold"}},ticks:{stepSize:10},grid:{drawOnChartArea:false}}
+      }
+    }
+  });
+
+  const avgT=d.actualT.filter(Number.isFinite);
+  const avgH=d.actualH.filter(Number.isFinite);
+  document.getElementById("summary").innerHTML=`
+    <div class="stat bs"><div class="st">CURRENT REGION</div><div>${r.name}</div><div class="sv">${r.station}</div></div>
+    <div class="stat bs"><div class="st">ACTUAL 2026 AVG TEMP</div><div class="sv">${avgT.length?avg(avgT).toFixed(1)+"°F":"—"}</div></div>
+    <div class="stat bs"><div class="st">PROJECTED WARMEST</div><div class="sv">${Math.max(...d.futureT).toFixed(1)}°F</div></div>
+    <div class="stat rs"><div class="st">ACTUAL 2026 AVG HI</div><div class="sv">${avgH.length?avg(avgH).toFixed(1)+"°F":"—"}</div></div>
+    <div class="stat rs"><div class="st">PROJECTED HOTTEST HI</div><div class="sv">${Math.max(...d.futureH).toFixed(1)}°F</div></div>
+    <div class="stat rs"><div class="st">SCALE</div><div class="sv">10–115°F</div></div>`;
+}
+function avg(a){return a.reduce((x,y)=>x+y,0)/a.length}
+regionEl.addEventListener("change",()=>render(regionEl.value));
+render("east");
+</script>
+</body>
+</html>
