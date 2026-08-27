@@ -3,7 +3,6 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
-
 BASE = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter"
 APP = "LouisianaCoastalTemperatureTracker"
 STATIONS = {
@@ -12,7 +11,6 @@ STATIONS = {
     "west": {"name":"West Coast Louisiana","station":"Calcasieu Pass, LA","id":"8768094","lat":29.768,"lon":-93.343},
 }
 YEARS = list(range(2020, 2027))
-
 def api(station, product, year):
     end_date = datetime.now(timezone.utc).strftime("%Y%m%d") if year == datetime.now(timezone.utc).year else f"{year}1231"
     params = {
@@ -39,7 +37,6 @@ def api(station, product, year):
             if attempt == 4:
                 raise
             time.sleep(5 * (attempt + 1))
-
 def heat_index_f(t, rh):
     if not (math.isfinite(t) and math.isfinite(rh)):
         return None
@@ -56,26 +53,21 @@ def heat_index_f(t, rh):
     elif rh > 85 and 80 <= t <= 87:
         h += ((rh-85)/10) * ((87-t)/5)
     return h
-
 def parse_time(s):
     # CO-OPS GMT strings are "YYYY-MM-DD HH:MM"
     return datetime.strptime(s, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
-
 def week_of_year(dt):
     day = (dt - datetime(dt.year,1,1,tzinfo=timezone.utc)).days
     return min(48, day // 7 + 1)
-
 def mean(vals):
     vals = [x for x in vals if isinstance(x,(int,float)) and math.isfinite(x)]
     return round(sum(vals)/len(vals), 3) if vals else None
-
 def last_completed_week():
     now = datetime.now(timezone.utc)
     start = datetime(now.year,1,1,tzinfo=timezone.utc)
     week = (now-start).days // 7
     # completed 7-day weeks are numbered 1..48
     return min(48, week)
-
 def anomaly_projection(actual, baseline):
     diffs = [actual[i]-baseline[i] for i in range(48)
              if actual[i] is not None and baseline[i] is not None]
@@ -90,7 +82,6 @@ def anomaly_projection(actual, baseline):
     weights = list(range(1, len(recent)+1))
     anomaly = sum(v*w for v,w in zip(recent,weights))/sum(weights)
     return [round(x+anomaly,3) if x is not None else None for x in baseline]
-
 def build_station(meta):
     all_rows = []
     for year in YEARS:
@@ -113,13 +104,11 @@ def build_station(meta):
             rh = humidity.get(x["t"])
             hi = heat_index_f(t, rh) if rh is not None else None
             all_rows.append((dt,t,hi))
-
     hist_t=[[] for _ in range(48)]
     hist_h=[[] for _ in range(48)]
     actual_t=[[] for _ in range(48)]
     actual_h=[[] for _ in range(48)]
     cutoff_week = last_completed_week()
-
     for dt,t,hi in all_rows:
         w=week_of_year(dt)-1
         if not 0 <= w < 48:
@@ -131,15 +120,12 @@ def build_station(meta):
         elif y == 2026 and w < cutoff_week:
             actual_t[w].append(t)
             if hi is not None: actual_h[w].append(hi)
-
     baseline_t=[mean(x) for x in hist_t]
     baseline_h=[mean(x) for x in hist_h]
     observed_t=[mean(x) for x in actual_t]
     observed_h=[mean(x) for x in actual_h]
-
     proj_t=anomaly_projection(observed_t, baseline_t)
     proj_h=anomaly_projection(observed_h, baseline_h)
-
     return {
         **meta,
         "baseline_temp": baseline_t,
@@ -149,7 +135,6 @@ def build_station(meta):
         "projected_2026_temp": [proj_t[i] if observed_t[i] is None else None for i in range(48)],
         "projected_2026_heat_index": [proj_h[i] if observed_h[i] is None else None for i in range(48)],
     }
-
 def main():
     out = {
         "generated_utc": datetime.now(timezone.utc).isoformat(),
@@ -160,6 +145,5 @@ def main():
     Path("data").mkdir(exist_ok=True)
     Path("data/coastal.json").write_text(json.dumps(out, indent=2), encoding="utf-8")
     print("Wrote data/coastal.json")
-
 if __name__ == "__main__":
     main()
