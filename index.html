@@ -77,7 +77,7 @@ function parseLite(text){
   for(const line of text.split(/\r?\n/)){
     if(!line.trim()) continue;
     const year=+line.slice(0,4),month=+line.slice(5,7),day=+line.slice(8,11),hour=+line.slice(11,13);
-    const tc=+line.slice(13,19), dc=+line.slice(19,25);
+   const tc=+line.slice(13,19)/10, dc=+line.slice(19,25)/10;
     if(tc<=-9990||dc<=-9990) continue;
     out.push({date:`${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}`,hour,t:f(tc),dp:f(dc)});
   }
