@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Coastal Louisiana — NOAA Temperature & Heat Index</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#fff;color:#172033;font-family:Arial,Helvetica,sans-serif}
+.page{max-width:1700px;margin:auto;padding:14px 20px 10px}
+h1{margin:0;text-align:center;font-size:clamp(25px,2.2vw,39px);line-height:1.15;font-weight:800}
+.subtitle{text-align:center;margin-top:7px;color:#626c7c;font-size:clamp(16px,1.4vw,26px)}
+.controls{display:flex;justify-content:center;align-items:center;gap:12px;margin:14px auto 5px;flex-wrap:wrap}
+.controls label{font-weight:700;font-size:17px}select{font-size:17px;padding:8px 38px 8px 12px;border:1px solid #aeb5c0;border-radius:8px;background:#fff;color:#172033}
+.station{text-align:center;color:#5f6877;font-size:14px;margin:4px 0}.status{text-align:center;color:#667085;font-size:14px;margin:7px 0}
+.legend{margin:17px auto 8px;display:flex;justify-content:center;gap:28px;flex-wrap:wrap;font-size:16px}
+.li{display:flex;align-items:center;gap:9px}.line{width:42px;height:0;border-top:3px solid;position:relative}.line:after{content:"";position:absolute;width:10px;height:10px;border:2px solid currentColor;background:#fff;border-radius:50%;left:50%;top:50%;transform:translate(-50%,-50%)}.blue{color:#1645c5}.red{color:#ef2b21}.dash{border-top-style:dashed}
+.info{text-align:center;margin:0 0 8px;font-size:14px;color:#596171}.chart-wrap{height:min(59vw,620px);min-height:430px;position:relative}
+.summary{display:grid;grid-template-columns:repeat(6,1fr);border:1px solid #cfd4dc;border-radius:12px;overflow:hidden;margin:6px 0 12px}
+.stat{text-align:center;padding:12px 6px 9px;min-height:91px;border-right:1px solid #d2d6dd;font-size:13px}.stat:last-child{border:0}.st{font-size:14px;font-weight:800;margin-bottom:6px}.sv{font-size:23px;font-weight:800}.bs{color:#123db8}.rs{color:#e82920}
+.error{display:none;margin:12px auto;padding:12px;border:1px solid #efb4b0;border-radius:8px;background:#fff6f5;color:#9b1c15;max-width:1100px;white-space:pre-wrap}
+.footer{display:flex;justify-content:space-between;color:#596171;font-size:12px;gap:20px}
+@media(max-width:900px){.page{padding:10px}.summary{grid-template-columns:repeat(2,1fr)}.stat{border-bottom:1px solid #d2d6dd}.stat:nth-child(2n){border-right:0}.stat:nth-last-child(-n+2){border-bottom:0}.footer{flex-direction:column}}
+</style>
+</head>
+<body>
+<div class="page">
+<h1>Coastal Louisiana — 5-Year Average Weekly Temperature &amp; Heat Index</h1>
+<div class="subtitle">NOAA/NDBC coastal observations: 2020–2025 baseline + 2026 actual through last completed week + 2026 projection</div>
+<div class="controls"><label for="region">Coastal region:</label>
+<select id="region"><option value="east">East Coast Louisiana</option><option value="central">Central Coast Louisiana</option><option value="west">West Coast Louisiana</option></select></div>
+<div class="station" id="station"></div><div class="status" id="status">Loading NOAA/NDBC observations…</div>
+<div class="legend">
+<div class="li"><span class="line blue"></span>Historical weekly average (2020–2025)</div>
+<div class="li"><span class="line red"></span>Historical average heat index</div>
+<div class="li"><span class="line blue dash"></span>2026 actual / projected temperature</div>
+<div class="li"><span class="line red dash"></span>2026 actual / projected heat index</div>
+</div>
+<div class="info">Hover a point for values. 2026 actual data are NOAA observations through the last completed 7-day week; remaining weeks are forecast from the 2020–2026 anomaly pattern.</div>
+<div class="chart-wrap"><canvas id="chart"></canvas></div>
+<div class="summary" id="summary"></div><div class="error" id="error"></div>
+<div class="footer"><span>NOAA/NDBC standard meteorological observations. Heat index is calculated from observed air temperature and dew point.</span><span id="source"></span></div>
+</div>
+<script>
+const REGIONS={
+ east:{name:"East Coast Louisiana",station:"Grand Isle, LA",id:"GISL1",lat:29.265,lon:-89.958},
+ central:{name:"Central Coast Louisiana",station:"North of Eugene Island, LA",id:"EINL1",lat:29.373,lon:-91.384},
+ west:{name:"West Coast Louisiana",station:"Calcasieu Pass, LA",id:"CAPL1",lat:29.768,lon:-93.343}
+};
+const YEARS=[2020,2021,2022,2023,2024,2025];
+let chart=null;
+const $=id=>document.getElementById(id);
+function hiF(t,rh){
+ if(!Number.isFinite(t)||!Number.isFinite(rh))return null;
+ if(t<80||rh<40)return null;
+ let h=-42.379+2.04901523*t+10.14333127*rh-.22475541*t*rh-.00683783*t*t-.05481717*rh*rh+.00122874*t*t*rh+.00085282*t*rh*rh-.00000199*t*t*rh*rh;
+ if(rh<13&&t>=80&&t<=112)h-=((13-rh)/4)*Math.sqrt((17-Math.abs(t-95))/17);
+ if(rh>85&&t>=80&&t<=87)h+=((rh-85)/10)*((87-t)/5);
+ return h;
+}
+function rhFromDew(t,dp){
+ if(!Number.isFinite(t)||!Number.isFinite(dp))return null;
+ const es=6.112*Math.exp((17.67*t)/(t+243.5)), e=6.112*Math.exp((17.67*dp)/(dp+243.5));
+ return Math.max(1,Math.min(100,100*e/es));
+}
+function weekOfYear(date){
+ const y=date.getUTCFullYear(), start=Date.UTC(y,0,1);
+ return Math.min(48,Math.floor((date.getTime()-start)/86400000/7)+1);
+}
+function lastCompletedWeekEnd(){
+ const now=new Date(), y=now.getUTCFullYear();
+ const start=new Date(Date.UTC(y,0,1));
+ const elapsed=Math.floor((now-start)/86400000);
+ const currentWeek=Math.floor(elapsed/7)+1;
+ return new Date(Date.UTC(y,0,1+currentWeek*7-1,23,59,59));
+}
+function parseNdbc(text,yearFilter){
+ const lines=text.split(/\r?\n/), out=[];
+ let header=null;
+ for(const line of lines){
+  if(line.startsWith("#YY")){header=line.trim().split(/\s+/).map(x=>x.replace(/^#/,""));continue}
+  if(!line||line[0]==="#")continue;
+  const a=line.trim().split(/\s+/); if(a.length<10)continue;
+  const yy=+a[0], mo=+a[1], day=+a[2], hh=+a[3], mm=+a[4];
+  if(!Number.isFinite(yy)||!Number.isFinite(mo)||!Number.isFinite(day))continue;
+  const y=yy<100?(yy>=70?1900+yy:2000+yy):yy;
+  if(yearFilter && y!==yearFilter)continue;
+  const h=header||[];
+  const idx=(name)=>{const i=h.indexOf(name);return i>=0?i:null};
+  const ia=idx("ATMP"), id=idx("DEWP");
+  if(ia===null)continue;
+  const t=parseFloat(a[ia]), dp=id===null?NaN:parseFloat(a[id]);
+  if(!Number.isFinite(t)||t<=-90)continue;
+  const d=new Date(Date.UTC(y,mo-1,day,hh,mm));
+  const rh=rhFromDew(t,dp), hi=hiF(t,rh);
+  out.push({date:d,t,dp,rh,hi});
+ }
+ return out;
+}
+async function fetchText(url){
+ const r=await fetch(url,{cache:"no-store"});
+ if(!r.ok)throw new Error("HTTP "+r.status+" — "+url);
+ return await r.text();
+}
+function histUrl(id,y){return `https://www.ndbc.noaa.gov/view_text_file.php?filename=${id.toLowerCase()}h${y}.txt.gz&dir=data/historical/stdmet/`;}
+function rtUrl(id){return `https://www.ndbc.noaa.gov/data/realtime2/${id.toLowerCase()}.txt`;}
+async function loadRegion(key){
+ const r=REGIONS[key]; $("error").style.display="none";
+ $("station").textContent=`${r.station} — NOAA/NDBC ${r.id} • ${r.lat.toFixed(3)}°N, ${Math.abs(r.lon).toFixed(3)}°W`;
+ $("status").textContent="Loading NOAA/NDBC 2020–2025 observations…";
+ const all=[];
+ const jobs=YEARS.map(async y=>{const tx=await fetchText(histUrl(r.id,y)); return parseNdbc(tx,y)});
+ try{
+  const parts=await Promise.all(jobs);
+  parts.forEach(x=>all.push(...x));
+  $("status").textContent="Loading NOAA/NDBC 2026 observations…";
+  // The 2026 quality-controlled file contains the completed months; realtime fills the latest ~45 days.
+  try{all.push(...parseNdbc(await fetchText(histUrl(r.id,2026)),2026))}catch(e){}
+  try{all.push(...parseNdbc(await fetchText(rtUrl(r.id)),2026))}catch(e){}
+  render(all,key);
+ }catch(e){
+  $("status").textContent="NOAA/NDBC data could not be loaded.";
+  $("error").textContent="The browser could not retrieve one or more NOAA/NDBC files.\\n\\n"+e.message+"\\n\\nIf this happens on GitHub Pages, we can switch the site to a small pre-built NOAA data file so the browser does not have to download the large historical station files.";
+  $("error").style.display="block";
+ }
+}
+function aggregate(rows){
+ const hist=Array.from({length:48},()=>({t:[],hi:[]}));
+ const y26=Array.from({length:48},()=>({t:[],hi:[]}));
+ const cutoff=lastCompletedWeekEnd();
+ for(const r of rows){
+  const w=weekOfYear(r.date)-1;if(w<0||w>=48)continue;
+  const y=r.date.getUTCFullYear();
+  if(y>=2020&&y<=2025){hist[w].t.push(r.t);if(Number.isFinite(r.hi))hist[w].hi.push(r.hi)}
+  else if(y===2026&&r.date<=cutoff){y26[w].t.push(r.t);if(Number.isFinite(r.hi))y26[w].hi.push(r.hi)}
+ }
+ const mean=a=>a.length?a.reduce((s,x)=>s+x,0)/a.length:null;
+ return {histT:hist.map(x=>mean(x.t)),histH:hist.map(x=>mean(x.hi)),a26T:y26.map(x=>mean(x.t)),a26H:y26.map(x=>mean(x.hi)),cutoff};
+}
+function linearForecast(actual,base){
+ const valid=[];
+ for(let i=0;i<48;i++)if(Number.isFinite(actual[i])&&Number.isFinite(base[i]))valid.push([i,actual[i]-base[i]]);
+ if(!valid.length)return base.slice();
+ const n=valid.length,mx=valid.reduce((s,p)=>s+p[0],0)/n,my=valid.reduce((s,p)=>s+p[1],0)/n;
+ let den=0,num=0;for(const [x,y] of valid){den+=(x-mx)**2;num+=(x-mx)*(y-my)}
+ const slope=den?num/den:0,inter=my-slope*mx;
+ const recent=valid.slice(-8).reduce((s,p)=>s+p[1],0)/Math.min(8,valid.length);
+ return base.map((b,i)=>Number.isFinite(b)?b+(0.55*(inter+slope*i)+0.45*recent):null);
+}
+function render(rows,key){
+ const a=aggregate(rows), histT=a.histT,histH=a.histH,actualT=a.a26T,actualH=a.a26H;
+ const projT=linearForecast(actualT,histT),projH=linearForecast(actualH,histH);
+ const actT=actualT.map((v,i)=>Number.isFinite(v)?v:null), actH=actualH.map((v,i)=>Number.isFinite(v)?v:null);
+ const futureT=projT.map((v,i)=>!Number.isFinite(actualT[i])?v:null),futureH=projH.map((v,i)=>!Number.isFinite(actualH[i])?v:null);
+ const labels=Array.from({length:48},(_,i)=>i+1),r=REGIONS[key];
+ if(chart)chart.destroy();
+ chart=new Chart($("chart"),{type:"line",data:{labels,datasets:[
+  {label:"Historical Avg Temp",data:histT,borderColor:"#1645c5",pointBorderColor:"#1645c5",pointBackgroundColor:"#fff",pointRadius:3,borderWidth:2.5,tension:.25},
+  {label:"Historical Avg Heat Index",data:histH,borderColor:"#ef2b21",pointBorderColor:"#ef2b21",pointBackgroundColor:"#fff",pointRadius:3,borderWidth:2.5,tension:.25},
+  {label:"2026 Actual Temp",data:actT,borderColor:"#1645c5",pointBorderColor:"#1645c5",pointBackgroundColor:"#fff",pointRadius:3,borderWidth:2.5,tension:.25},
+  {label:"2026 Projected Temp",data:futureT,borderColor:"#1645c5",borderDash:[8,6],pointRadius:3,borderWidth:2.5,tension:.25},
+  {label:"2026 Actual Heat Index",data:actH,borderColor:"#ef2b21",pointBorderColor:"#ef2b21",pointBackgroundColor:"#fff",pointRadius:3,borderWidth:2.5,tension:.25},
+  {label:"2026 Projected Heat Index",data:futureH,borderColor:"#ef2b21",borderDash:[8,6],pointRadius:3,borderWidth:2.5,tension:.25}
+ ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},plugins:{legend:{display:false},tooltip:{callbacks:{title:i=>`Week ${i[0].label}`,label:i=>`${i.dataset.label}: ${Number(i.raw).toFixed(1)}°F`}}},scales:{
+  x:{title:{display:true,text:"Week of Year",font:{size:18,weight:"bold"}},ticks:{maxRotation:0}},
+  temp:{position:"left",min:10,max:115,title:{display:true,text:"Temperature (°F)",font:{size:18,weight:"bold"}},ticks:{stepSize:10},grid:{color:"#dfe2e6"}},
+  heat:{position:"right",min:10,max:115,title:{display:true,text:"Heat Index (°F)",font:{size:18,weight:"bold"}},ticks:{stepSize:10},grid:{drawOnChartArea:false}}
+ }}});
+ const mean=a=>{const v=a.filter(Number.isFinite);return v.length?v.reduce((s,x)=>s+x,0)/v.length:null};
+ const minT=Math.min(...histT.filter(Number.isFinite)), maxT=Math.max(...histT.filter(Number.isFinite)), maxH=Math.max(...histH.filter(Number.isFinite));
+ const avg26=mean(actualT),avg26h=mean(actualH),predMax=Math.max(...futureT.filter(Number.isFinite)),predMaxH=Math.max(...futureH.filter(Number.isFinite));
+ $("summary").innerHTML=`
+ <div class="stat bs"><div class="st">REGION / STATION</div><div>${r.name}</div><div class="sv">${r.station}</div></div>
+ <div class="stat bs"><div class="st">2020–2025 AVG TEMP</div><div class="sv">${mean(histT).toFixed(1)}°F</div></div>
+ <div class="stat bs"><div class="st">2026 ACTUAL AVG TEMP</div><div class="sv">${avg26?avg26.toFixed(1)+"°F":"—"}</div></div>
+ <div class="stat rs"><div class="st">2020–2025 AVG HEAT INDEX</div><div class="sv">${mean(histH)?mean(histH).toFixed(1)+"°F":"—"}</div></div>
+ <div class="stat rs"><div class="st">2026 ACTUAL AVG HEAT INDEX</div><div class="sv">${avg26h?avg26h.toFixed(1)+"°F":"—"}</div></div>
+ <div class="stat rs"><div class="st">PROJECTED PEAK / HEAT INDEX</div><div class="sv">${predMax.toFixed(1)}° / ${predMaxH.toFixed(1)}°F</div></div>`;
+ $("status").textContent=`NOAA/NDBC loaded. 2020–2025 baseline + 2026 observations through ${a.cutoff.toISOString().slice(0,10)} + projection.`;
+ $("source").textContent=`Station: ${r.station} (${r.id}) • NOAA/NDBC historical + real-time meteorological data`;
+}
+$("region").addEventListener("change",()=>loadRegion($("region").value));
+loadRegion("east");
+</script>
+</body>
+</html>
