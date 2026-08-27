@@ -1,4 +1,4 @@
-\
+
 import json, math, time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
