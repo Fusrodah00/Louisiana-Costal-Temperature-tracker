@@ -1,5 +1,5 @@
 {
-  "generated_utc": "2026-09-16T12:36:07.694271+00:00",
+  "generated_utc": "2026-09-17T12:35:37.855995+00:00",
   "source": "NOAA/NDBC standard meteorological observations",
   "historical_years": [
     2020,
@@ -10,7 +10,7 @@
     2025
   ],
   "actual_year": 2026,
-  "actual_through_completed_week": 36,
+  "actual_through_completed_week": 37,
   "weeks": [
     1,
     2,
